@@ -55,20 +55,20 @@ public:
 			align_mask(page_size - 1),
 			buffer_size(buffer_size)
 	{
-		int mode = 0;
-		if(read_flag && write_flag) {
-			mode |= O_RDWR;
-		} else if(read_flag) {
-			mode |= O_RDONLY;
+		int flags = 0;
+		if(write_flag) {
+			flags |= O_RDWR;
 		} else {
-			mode |= O_WRONLY;
+			flags |= O_WRONLY;
 		}
 		if(create_flag) {
-			mode |= O_CREAT;
+			flags |= O_CREAT;
 		}
-		fd = ::open(file_path.c_str(), mode | O_DIRECT);
+		const auto mode = 0644;
+
+		fd = ::open(file_path.c_str(), flags | O_DIRECT, mode);
 		if(fd < 0) {
-			fd = ::open(file_path.c_str(), mode);	// fall back to sucks IO
+			fd = ::open(file_path.c_str(), flags, mode);	// fall back to sucks IO
 		} else {
 			direct_flag = true;
 		}
@@ -88,7 +88,7 @@ public:
 	void write(const void* data, const size_t length, const uint64_t offset, buffer_t& buffer)
 	{
 		if(!buffer.data) {
-			buffer.data = ::aligned_alloc(page_size, buffer_size);
+			buffer.data = (uint8_t*)::aligned_alloc(page_size, buffer_size);
 		}
 
 		size_t total = 0;
@@ -159,6 +159,8 @@ public:
 			::free(entry.second);
 		}
 		cache.clear();
+
+		read_flag = true;
 	}
 
 	/*
@@ -187,7 +189,7 @@ protected:
 		const auto index = address >> log_page_size;
 		auto& page = cache[index];
 		if(!page) {
-			page = ::aligned_alloc(page_size, page_size);
+			page = (uint8_t*)::aligned_alloc(page_size, page_size);
 			if(read_flag) {
 				const auto ret = ::pread(fd, page, page_size, index * page_size);
 				if(ret <= 0) {
@@ -203,7 +205,7 @@ protected:
 	}
 
 private:
-	const bool read_flag;
+	bool read_flag;
 	const bool write_flag;
 	const int log_page_size;
 	const uint32_t page_size;
