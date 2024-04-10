@@ -25,20 +25,24 @@
 
 namespace mad {
 
-struct buffer_t
-{
-	uint8_t* data = nullptr;
-
-	~buffer_t() {
-		if(data) {
-			::free(data);
-			data = nullptr;
-		}
-	}
-};
-
 class DirectFile {
 public:
+	/*
+	 * Thread local buffer used to align memory address.
+	 * Should be re-used between calls from the same thread, to avoid alloc / free overhead.
+	 */
+	struct buffer_t
+	{
+		uint8_t* data = nullptr;
+
+		~buffer_t() {
+			if(data) {
+				::free(data);
+				data = nullptr;
+			}
+		}
+	};
+
 	/*
 	 * Note: read_flag needs to be true if file has existing content that needs to be preserved!
 	 */
@@ -77,17 +81,22 @@ public:
 		close();
 	}
 
-	// thread-safe
+	/*
+	 * Note: thread-safe
+	 * Note: `buffer` should be default initialized and re-used between calls from the same thread.
+	 */
 	void write(const void* data, const size_t length, const uint64_t offset, buffer_t& buffer)
 	{
 		if(!buffer.data) {
 			buffer.data = ::aligned_alloc(page_size, buffer_size);
 		}
+
 		size_t total = 0;
 		const auto src = (const uint8_t*)data;
 		{
 			const auto offset_mod = offset & align_mask;
 			if(offset_mod) {
+				// handle unaligned start address
 				const auto count = std::min<size_t>(page_size - offset_mod, length);
 				{
 					std::lock_guard<std::mutex> lock(mutex);
@@ -99,9 +108,10 @@ public:
 
 		while(total < length)
 		{
-			size_t count = std::max<size_t>(length - total, buffer_size);
+			size_t count = std::min<size_t>(length - total, buffer_size);
 			if(count >= page_size) {
-				count &= ~size_t(align_mask);
+				count &= ~size_t(align_mask);	// align count to page size
+
 				::memcpy(buffer.data, src + total, count);
 
 				const auto addr = offset + total;
@@ -113,7 +123,7 @@ public:
 
 				std::lock_guard<std::mutex> lock(mutex);
 
-				// clear any cached pages that we just over-wrote
+				// discard any cached pages that we just over-wrote
 				for(auto iter = cache.lower_bound(begin); iter != cache.end();)
 				{
 					if(iter->first < end) {
@@ -124,6 +134,7 @@ public:
 					}
 				}
 			} else {
+				// final unaligned tail
 				std::lock_guard<std::mutex> lock(mutex);
 				::memcpy(get_page(offset + total), src + total, count);
 			}
@@ -131,7 +142,9 @@ public:
 		}
 	}
 
-	// thread-safe
+	/* Flush all cached pages to file.
+	 * Note: thread-safe
+	 */
 	void flush()
 	{
 		if(fd < 0) {
@@ -148,7 +161,10 @@ public:
 		cache.clear();
 	}
 
-	// NOT thread-safe
+	/*
+	 * Flush cache and close file.
+	 * Note: NOT thread-safe
+	 */
 	void close()
 	{
 		if(fd >= 0) {
@@ -160,6 +176,7 @@ public:
 		}
 	}
 
+	// returns true when actually using Direct IO
 	bool is_direct() const {
 		return direct_flag;
 	}
@@ -167,13 +184,16 @@ public:
 protected:
 	uint8_t* get_page(const uint64_t address)
 	{
-		const uint64_t index = address >> log_page_size;
+		const auto index = address >> log_page_size;
 		auto& page = cache[index];
 		if(!page) {
 			page = ::aligned_alloc(page_size, page_size);
 			if(read_flag) {
-				if(::pread(fd, page, page_size, index * page_size) != page_size) {
-					throw std::runtime_error("pread() failed with: " + std::string(std::strerror(errno)));
+				const auto ret = ::pread(fd, page, page_size, index * page_size);
+				if(ret <= 0) {
+					::memset(page, 0, page_size);
+				} else {
+					::memset(page + ret, 0, page_size - ret);
 				}
 			} else {
 				::memset(page, 0, page_size);
