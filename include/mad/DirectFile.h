@@ -142,7 +142,8 @@ public:
 		}
 	}
 
-	/* Flush all cached pages to file.
+	/*
+	 * Flush all cached pages to file.
 	 * Note: thread-safe
 	 */
 	void flush()
