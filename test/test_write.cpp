@@ -13,6 +13,8 @@
 #include <random>
 #include <vector>
 #include <chrono>
+#include <mutex>
+#include <thread>
 
 inline
 int64_t get_time_micros() {
@@ -30,9 +32,11 @@ int main(int argc, char** argv)
 	::remove(path.c_str());
 
 	const uint64_t file_size = uint64_t(argc > 2 ? atoi(argv[2]) : 1024) * 1024 * 1024;
+	const int num_threads = (argc > 3 ? atoi(argv[3]) : 8);
 
 	std::cout << "File: " << path << std::endl;
 	std::cout << "Size: " << file_size / pow(1024, 3) << " GiB" << std::endl;
+	std::cout << "Threads: " << num_threads << std::endl;
 
 	std::default_random_engine generator;
 
@@ -48,23 +52,47 @@ int main(int argc, char** argv)
 
 		std::cout << "Direct IO: " << (file.is_direct() ? "yes" : "no") << std::endl;
 
-		mad::DirectFile::buffer_t buffer;
+		std::mutex mutex;
+		uint64_t offset = 0;
+		std::vector<std::thread> threads;
 
-		for(uint64_t offset = 0; offset < file_size;)
+		for(int i = 0; i < num_threads; ++i)
 		{
-			const auto src = offset % data_size;
+			threads.emplace_back([&file, &offset, &mutex, &data, &generator, data_size, file_size]()
+			{
+				mad::DirectFile::buffer_t buffer;
 
-			auto count = generator() % data_size;
-			count = std::min(count, file_size - offset);
-			count = std::min(count, data_size - src);
+				while(true) {
+					std::unique_lock<std::mutex> lock(mutex);
 
-			file.write(((const uint8_t*)data.data()) + src, count, offset, buffer);
+					if(offset >= file_size) {
+						break;
+					}
+					const auto src = offset % data_size;
 
-			if(offset % 16 == 1) {
-				file.flush();
-				std::cout << "Flushed at offset " << offset << " (" << offset / double(file_size) << ")" << std::endl;
-			}
-			offset += count;
+					auto count = generator() % data_size;
+					count = std::min(count, file_size - offset);
+					count = std::min(count, data_size - src);
+
+					const auto offset_ = offset;
+					offset += count;
+
+					lock.unlock();
+
+					file.write(((const uint8_t*)data.data()) + src, count, offset_, buffer);
+
+					if(offset_ % 16 == 1)
+					{
+						file.flush();
+
+						std::lock_guard<std::mutex> lock(mutex);
+						std::cout << "Flushed at offset " << offset_ << " (" << offset_ / double(file_size) << ")" << std::endl;
+					}
+				}
+			});
+		}
+		for(auto& thread : threads) {
+			thread.join();
 		}
 		file.close();
 	}
