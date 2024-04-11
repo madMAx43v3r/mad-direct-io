@@ -115,7 +115,7 @@ public:
 				::memcpy(buffer.data, src + total, count);
 
 				const auto addr = offset + total;
-				if(::pwrite(fd, buffer.data, count, addr) != count) {
+				if(::pwrite(fd, buffer.data, count, addr) != ssize_t(count)) {
 					throw std::runtime_error("pwrite() failed with: " + std::string(std::strerror(errno)));
 				}
 				const auto begin = addr >> log_page_size;
@@ -154,7 +154,7 @@ public:
 		std::lock_guard<std::mutex> lock(mutex);
 
 		for(const auto& entry : cache) {
-			if(::pwrite(fd, entry.second, page_size, entry.first * page_size) != page_size) {
+			if(::pwrite(fd, entry.second, page_size, entry.first * page_size) != ssize_t(page_size)) {
 				throw std::runtime_error("pwrite() on flush failed with: " + std::string(std::strerror(errno)));
 			}
 			::free(entry.second);
