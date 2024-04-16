@@ -47,6 +47,9 @@ public:
 		}
 	};
 
+	// auto flush after buffering number of bytes (0 = disable)
+	size_t auto_flush_bytes = 4 * 1024 * 1024;
+
 	/*
 	 * Note: read_flag needs to be true if file has existing content that needs to be preserved!
 	 */
@@ -143,6 +146,12 @@ public:
 				::memcpy(get_page(offset + total), src + total, count);
 			}
 			total += count;
+		}
+
+		if(auto_flush_bytes) {
+			if(cache.size() * page_size >= auto_flush_bytes) {
+				flush();
+			}
 		}
 	}
 
