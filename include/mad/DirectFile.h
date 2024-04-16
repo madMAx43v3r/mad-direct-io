@@ -99,6 +99,8 @@ public:
 		}
 
 		size_t total = 0;
+		size_t cache_size = 0;
+
 		const auto src = (const uint8_t*)data;
 		{
 			const auto offset_mod = offset & align_mask;
@@ -108,6 +110,7 @@ public:
 				{
 					std::lock_guard<std::mutex> lock(mutex);
 					::memcpy(get_page(offset) + offset_mod, data, count);
+					cache_size = cache.size();
 				}
 				total += count;
 			}
@@ -140,16 +143,18 @@ public:
 						break;
 					}
 				}
+				cache_size = cache.size();
 			} else {
 				// final unaligned tail
 				std::lock_guard<std::mutex> lock(mutex);
 				::memcpy(get_page(offset + total), src + total, count);
+				cache_size = cache.size();
 			}
 			total += count;
 		}
 
 		if(auto_flush_bytes) {
-			if(cache.size() * page_size >= auto_flush_bytes) {
+			if(cache_size * page_size >= auto_flush_bytes) {
 				flush();
 			}
 		}
