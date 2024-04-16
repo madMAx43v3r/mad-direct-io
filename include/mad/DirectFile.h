@@ -47,6 +47,9 @@ public:
 		}
 	};
 
+	// enable to flush directly
+	bool sequential_write = false;
+
 	// auto flush after buffering number of bytes (0 = disable)
 	size_t auto_flush_bytes = 4 * 1024 * 1024;
 
@@ -110,6 +113,12 @@ public:
 				{
 					std::lock_guard<std::mutex> lock(mutex);
 					::memcpy(get_page(offset) + offset_mod, data, count);
+
+					if(sequential_write) {
+						if(offset_mod + count == page_size) {
+							flush_no_lock();
+						}
+					}
 					cache_size = cache.size();
 				}
 				total += count;
@@ -171,15 +180,7 @@ public:
 		}
 		std::lock_guard<std::mutex> lock(mutex);
 
-		for(const auto& entry : cache) {
-			if(::pwrite(fd, entry.second, page_size, entry.first * page_size) != ssize_t(page_size)) {
-				throw std::runtime_error("pwrite() on flush failed with: " + std::string(std::strerror(errno)));
-			}
-			::free(entry.second);
-		}
-		cache.clear();
-
-		read_flag = true;
+		flush_no_lock();
 	}
 
 	/*
@@ -221,6 +222,25 @@ protected:
 			}
 		}
 		return page;
+	}
+
+	void flush_page(const uint64_t index, uint8_t*& page)
+	{
+		if(::pwrite(fd, page, page_size, index * page_size) != ssize_t(page_size)) {
+			throw std::runtime_error("pwrite() on flush failed with: " + std::string(std::strerror(errno)));
+		}
+		::free(page);
+		page = nullptr;
+	}
+
+	void flush_no_lock()
+	{
+		for(auto& entry : cache) {
+			flush_page(entry.first, entry.second);
+		}
+		cache.clear();
+
+		read_flag = true;
 	}
 
 private:
