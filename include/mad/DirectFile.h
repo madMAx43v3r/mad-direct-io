@@ -35,6 +35,10 @@ public:
 	{
 		uint8_t* data = nullptr;
 
+		buffer_t() = default;
+		buffer_t(const buffer_t&) = delete;
+		buffer_t& operator=(const buffer_t&) = delete;
+
 		~buffer_t() {
 			if(data) {
 				::free(data);
